@@ -28,8 +28,6 @@ const Upload = () => {
     setStatustext('Converting to image ...');
 
     const imageFile = await convertPdfToImage(file)
-    console.log('png bytes', imageFile.file?.size)
-    console.log("imageFile", imageFile)
 
     if (!imageFile.file) return setStatustext('Error: Failed to convert PDF to image')
 
@@ -52,7 +50,7 @@ const Upload = () => {
 
     await kv.set(`resume:${uuid}`, JSON.stringify(data))
 
-    setStatustext('Analyizing...')
+    setStatustext('Analyzing...')
 
     const feedback = await ai.feedback(
       uploadedImage.path,
@@ -70,9 +68,10 @@ const Upload = () => {
 
     await kv.set(`resume:${uuid}`, JSON.stringify(data))
 
-    setStatustext("Analyse complete! Redirecting...")
+    setStatustext("Analysis complete! Redirecting...")
 
     console.log(data)
+    navigate(`/resume/${uuid}`)
   }
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
