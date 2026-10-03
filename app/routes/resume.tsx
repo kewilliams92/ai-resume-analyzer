@@ -17,6 +17,7 @@ const Resume = () => {
   const [imageUrl, setImageUrl] = useState('')
   const [resumeUrl, setResumeUrl] = useState('')
   const [feedback, setFeedback] = useState<Feedback | null>(null)
+  const [error, setError] = useState('')
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -25,27 +26,30 @@ const Resume = () => {
 
   useEffect(() => {
     const loadResume = async () => {
-      const resume = await kv.get(`resume:${id}`)
+      try {
+        const resume = await kv.get(`resume:${id}`)
 
-      if (!resume) return;
+        if (!resume) return;
 
-      const data = JSON.parse(resume)
+        const data = JSON.parse(resume)
 
-      const resumeBlob = await fs.read(data.resumePath)
-      if (!resumeBlob) return;
+        const resumeBlob = await fs.read(data.resumePath)
+        if (!resumeBlob) return;
 
-      const pdfBlob = new Blob([resumeBlob], { type: 'application/pdf' })
-      const resumeUrl = URL.createObjectURL(pdfBlob)
+        const pdfBlob = new Blob([resumeBlob], { type: 'application/pdf' })
+        const resumeUrl = URL.createObjectURL(pdfBlob)
 
-      setResumeUrl(resumeUrl)
+        setResumeUrl(resumeUrl)
 
-      const imageBlob = await fs.read(data.imagePath)
-      if (!imageBlob) return;
-      const imageUrl = URL.createObjectURL(imageBlob)
-      setImageUrl(imageUrl)
+        const imageBlob = await fs.read(data.imagePath)
+        if (!imageBlob) return;
+        const imageUrl = URL.createObjectURL(imageBlob)
+        setImageUrl(imageUrl)
 
-      setFeedback(data.feedback)
-      console.log({ resumeUrl, imageUrl, feedback: data.feedback })
+        setFeedback(data.feedback)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load resume')
+      }
     }
 
     loadResume()
@@ -77,7 +81,9 @@ const Resume = () => {
           <h2 className="text-4xl text-black font-bold">
             Resume Review
           </h2>
-          {feedback ? (
+          {error ? (
+            <p className="text-red-500">{error}</p>
+          ) : feedback ? (
             <div className="flex flex-col gap-8 animate-in fade-in duration-1000">
               <Summary feedback={feedback} />
               <ATS score={feedback.ATS.score || 0} suggestions={feedback.ATS.tips || []} />

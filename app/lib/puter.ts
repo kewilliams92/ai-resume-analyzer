@@ -34,7 +34,7 @@ declare global {
       kv: {
         get: (key: string) => Promise<string | null>;
         set: (key: string, value: string) => Promise<boolean>;
-        delete: (key: string) => Promise<boolean>;
+        del: (key: string) => Promise<boolean>;
         list: (pattern: string, returnValues?: boolean) => Promise<string[]>;
         flush: () => Promise<boolean>;
       };
@@ -99,6 +99,34 @@ interface PuterStore {
 const getPuter = (): typeof window.puter | null =>
   typeof window !== "undefined" && window.puter ? window.puter : null;
 
+const MAX_CONCURRENT = 1;
+const MIN_GAP_MS = 350;
+let active = 0;
+let lastStart = 0;
+const pending: (() => void)[] = [];
+
+const throttle = <T,>(fn: () => Promise<T>): Promise<T> =>
+  new Promise((resolve, reject) => {
+    const run = async () => {
+      active++;
+      const wait = Math.max(0, lastStart + MIN_GAP_MS - Date.now());
+      if (wait) await new Promise((r) => setTimeout(r, wait));
+      lastStart = Date.now();
+      try {
+        resolve(await fn());
+      } catch (e) {
+        reject(e);
+      } finally {
+        active--;
+        pending.shift()?.();
+      }
+    };
+    active < MAX_CONCURRENT ? run() : pending.push(run);
+  });
+
+const readCache = new Map<string, Promise<Blob | undefined>>();
+let initStarted = false;
+
 export const usePuterStore = create<PuterStore>((set, get) => {
   const setError = (msg: string) => {
     set({
@@ -126,9 +154,9 @@ export const usePuterStore = create<PuterStore>((set, get) => {
     set({ isLoading: true, error: null });
 
     try {
-      const isSignedIn = await puter.auth.isSignedIn();
+      const isSignedIn = await throttle(() => puter.auth.isSignedIn());
       if (isSignedIn) {
-        const user = await puter.auth.getUser();
+        const user = await throttle(() => puter.auth.getUser());
         set({
           auth: {
             user,
@@ -175,7 +203,7 @@ export const usePuterStore = create<PuterStore>((set, get) => {
     set({ isLoading: true, error: null });
 
     try {
-      await puter.auth.signIn();
+      await throttle(() => puter.auth.signIn());
       await checkAuthStatus();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Sign in failed";
@@ -193,7 +221,7 @@ export const usePuterStore = create<PuterStore>((set, get) => {
     set({ isLoading: true, error: null });
 
     try {
-      await puter.auth.signOut();
+      await throttle(() => puter.auth.signOut());
       set({
         auth: {
           user: null,
@@ -222,7 +250,7 @@ export const usePuterStore = create<PuterStore>((set, get) => {
     set({ isLoading: true, error: null });
 
     try {
-      const user = await puter.auth.getUser();
+      const user = await throttle(() => puter.auth.getUser());
       set({
         auth: {
           user,
@@ -242,6 +270,9 @@ export const usePuterStore = create<PuterStore>((set, get) => {
   };
 
   const init = (): void => {
+    if (get().puterReady || initStarted) return;
+    initStarted = true;
+
     const puter = getPuter();
     if (puter) {
       set({ puterReady: true });
@@ -289,7 +320,14 @@ export const usePuterStore = create<PuterStore>((set, get) => {
       setError("Puter.js not available");
       return;
     }
-    return puter.fs.read(path);
+
+    const cached = readCache.get(path);
+    if (cached) return cached;
+
+    const promise = throttle(() => puter.fs.read(path));
+    readCache.set(path, promise);
+    promise.catch(() => readCache.delete(path));
+    return promise;
   };
 
   const upload = async (files: File[] | Blob[]) => {
@@ -369,7 +407,7 @@ export const usePuterStore = create<PuterStore>((set, get) => {
       setError("Puter.js not available");
       return;
     }
-    return puter.kv.get(key);
+    return throttle(() => puter.kv.get(key));
   };
 
   const setKV = async (key: string, value: string) => {
@@ -378,7 +416,7 @@ export const usePuterStore = create<PuterStore>((set, get) => {
       setError("Puter.js not available");
       return;
     }
-    return puter.kv.set(key, value);
+    return throttle(() => puter.kv.set(key, value));
   };
 
   const deleteKV = async (key: string) => {
@@ -387,7 +425,7 @@ export const usePuterStore = create<PuterStore>((set, get) => {
       setError("Puter.js not available");
       return;
     }
-    return puter.kv.delete(key);
+    return throttle(() => puter.kv.del(key));
   };
 
   const listKV = async (pattern: string, returnValues?: boolean) => {
@@ -399,7 +437,7 @@ export const usePuterStore = create<PuterStore>((set, get) => {
     if (returnValues === undefined) {
       returnValues = false;
     }
-    return puter.kv.list(pattern, returnValues);
+    return throttle(() => puter.kv.list(pattern, returnValues));
   };
 
   const flushKV = async () => {
@@ -408,7 +446,7 @@ export const usePuterStore = create<PuterStore>((set, get) => {
       setError("Puter.js not available");
       return;
     }
-    return puter.kv.flush();
+    return throttle(() => puter.kv.flush());
   };
 
   return {
